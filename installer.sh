@@ -4,14 +4,50 @@
 apt-get update
 apt-get upgrade -y
 apt-get install unzip -y
-apt-get install build-essential python-dev cmake -y
-apt-get install python-serial python-pip python-gps -y # python dependencies
+apt-get install build-essential -y
+apt-get install python-dev -y
+apt-get install cmake -y
+apt-get install python-serial -y
+apt-get install python-pip -y
+apt-get install python-gps -y # python dependencies
 apt-get install mongodb -y # MongoDB
-apt-get install gpsd gpsd-clients python-gps -y # GPS
+apt-get install gpsd -y
+apt-get install gpsd-clients -y
+apt-get install python-gps -y # GPS
 apt-get install python-matplotlib -y
+apt-get install libgtk2.0-dev -y
+apt-get install python-numpy -y
+apt-get install libqt4-dev -y
+apt-get install libopencv-dev -y
+apt-get install build-essential -y
+apt-get install checkinstall -y
+apt-get install pkg-config -y
+apt-get install yasm -y
+apt-get install libjpeg-dev -y
+apt-get install libjasper-dev -y
+apt-get install libavcodec-dev -y
+apt-get install libavformat-dev -y
+apt-get install libswscale-dev -y
+apt-get install libdc1394-22-dev -y
+apt-get install libxine-dev -y
+apt-get install libgstreamer0.10-dev -y
+apt-get install libgstreamer-plugins-base0.10-dev -y
+apt-get install libv4l-dev -y
+apt-get install python-numpy -y
+apt-get install libtbb-dev -y
+apt-get install libqt4-dev -y
+apt-get install libgtk2.0-dev -y
+apt-get install libfaac-dev -y
+apt-get install libmp3lame-dev
+apt-get install libopencore-amrnb-dev -y
+apt-get install libopencore-amrwb-dev -y
+apt-get install libtheora-dev -y
+apt-get install libvorbis-dev -y
+apt-get install libxvidcore-dev -y
+apt-get install x264 -y
+apt-get install v4l-utils -y
 
 ## OpenCV Dependencies
-apt-get install libgtk2.0-dev libqt4-dev libopencv-dev build-essential checkinstall cmake pkg-config yasm libjpeg-dev libjasper-dev libavcodec-dev libavformat-dev libswscale-dev libdc1394-22-dev libxine-dev libgstreamer0.10-dev libgstreamer-plugins-base0.10-dev libv4l-dev python-dev python-numpy libtbb-dev libqt4-dev libgtk2.0-dev libfaac-dev libmp3lame-dev libopencore-amrnb-dev libopencore-amrwb-dev libtheora-dev libvorbis-dev libxvidcore-dev x264 v4l-utils
 cd /usr/include/linux
 ln -s ../libv4l1-videodev.h videodev.h
 ln -s ../libavformat/avformat.h avformat.h
