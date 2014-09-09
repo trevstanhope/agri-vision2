@@ -3,7 +3,8 @@
 # Aptitude
 apt-get update
 apt-get upgrade -y
-apt-get install build-essential cmake -y
+apt-get install unzip -y
+apt-get install build-essential python-dev cmake -y
 apt-get install python-serial python-pip python-gps -y # python dependencies
 apt-get install mongodb -y # MongoDB
 apt-get install gpsd gpsd-clients python-gps -y # GPS
