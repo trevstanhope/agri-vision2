@@ -1,5 +1,5 @@
 {
-    "CAMERAS" : [1],
+    "CAMERAS" : [0,1],
     "FREQUENCY_LIMIT" : 50,
     "PIXEL_WIDTH" : 160,
     "PIXEL_HEIGHT" : 120,
