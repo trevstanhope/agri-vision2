@@ -1,12 +1,15 @@
 """
-AutoTill 2.0
+Agri-Vision 2.0
+Agri-Fusion 2000, Inc.
 McGill University, Department of Bioresource Engineering
 """
 
 __author__ = 'Trevor Stanhope'
 __version__ = '2.0.'
+__license__ = 'All Rights Reserved'
 
 ## Libraries
+from zaber import zaber
 import cv2, cv
 import serial # Electro-hydraulic controller
 import pymongo # DB
@@ -54,10 +57,14 @@ class Cultivator:
         print('\tBrush Range: +/- %d cm' % self.BRUSH_RANGE)
         self.PIXEL_PER_CM = self.PIXEL_WIDTH / self.GROUND_WIDTH
         print('\tPixel-per-cm: %d px/cm' % self.PIXEL_PER_CM)
-        self.PIXEL_RANGE = int(self.PIXEL_PER_CM * self.BRUSH_RANGE) 
-        print('\tPixel Range: +/- %d px' % self.PIXEL_RANGE)
+        self.PIXEL_RANGE = int(self.PIXEL_PER_CM * self.BRUSH_RANGE)
+        print('\tPixel Range: %d' % self.PIXEL_RANGE)
         self.PIXEL_MIN = self.PIXEL_CENTER - self.PIXEL_RANGE
         self.PIXEL_MAX = self.PIXEL_CENTER + self.PIXEL_RANGE
+        self.PWM_PER_PIXEL = 255 / (2 * self.PIXEL_RANGE)
+        self.PWM_CENTER = 255 / 2
+        print('\tPWM-per-pixel: %f pwm/px' % self.PWM_PER_PIXEL)
+        time.sleep(1)
         self.cameras = []
         for i in self.CAMERAS:
             if self.VERBOSE: print('\tInitializing Camera: %d' % i)
@@ -80,31 +87,10 @@ class Cultivator:
             self.log.write(','.join(['time', 'lat', 'long', 'speed', 'cam0', 'cam1', 'estimate', 'average', 'pwm','\n']))
         except Exception as error:
             print('\tERROR in __init__(): %s' % str(error))
-        
-        # PWM Response Range for Electrohyraulic-Control
-        if self.VERBOSE: print('[Initialing Electro-Hydraulics] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
-        self.MIN_PWM = int(255 * self.MIN_VOLTAGE / self.SUPPLY_VOLTAGE)
-        if self.VERBOSE: print('\tPWM at Minimum: %d' % self.MIN_PWM)
-        self.MAX_PWM = int(255 * self.MAX_VOLTAGE / self.SUPPLY_VOLTAGE)
-        if self.VERBOSE: print('\tPWM at Maximum: %d' % self.MAX_PWM)
-        self.CENTER_PWM = int(self.MIN_PWM + self.MAX_PWM / 2.0)
-        if self.VERBOSE: print('\tPWM at Center: %d' % self.CENTER_PWM)
-        self.RANGE_PWM = int(self.MAX_PWM - self.MIN_PWM)
-        if self.VERBOSE: print('\tRange PWM: %d' % self.RANGE_PWM)
-        self.PWM_RESPONSE = []
-        for i in range(self.PIXEL_WIDTH):
-            if i <= (self.PIXEL_CENTER - self.PIXEL_RANGE):
-                val = self.MAX_PWM
-            elif i >= (self.PIXEL_CENTER + self.PIXEL_RANGE):
-                val = self.MIN_PWM
-            else:
-                val = int(self.MAX_PWM - (self.CENTER_PWM + float(self.RANGE_PWM) * (i - self.PIXEL_CENTER - 2) / float(2 * self.PIXEL_RANGE)))
-            self.PWM_RESPONSE.append(val)
-        if self.VERBOSE: print(self.PWM_RESPONSE)
     
         # Offset History
         if self.VERBOSE: print('\tDefault Number of Averages: %d' % self.NUM_AVERAGES)
-        self.offset_history = [self.PIXEL_CENTER] * self.NUM_AVERAGES
+        self.offset_history = [0] * self.NUM_AVERAGES
         
         # Arduino Connection
         if self.VERBOSE: print('[Initializing Arduino] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
@@ -115,6 +101,12 @@ class Cultivator:
         except Exception as error:
             print('\tERROR in __init__(): %s' % str(error))
         
+        # Zaber
+        if self.VERBOSE: print('[Initializing Zaber] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
+        if self.ZABER_ENABLED:
+            io = zaber.serial_connection('/dev/ttyUSB0', '<2Bi')
+            self.zaber = zaber.zaber_device(io, 1, 'zaber', run_mode = 1, verbose = True)
+            
         # GPS
         if self.VERBOSE: print('[Initializing GPS] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
         if self.GPS_ENABLED:
@@ -183,7 +175,7 @@ class Cultivator:
         if self.VERBOSE: print('\tNumber of Masks: %d mask(s) ' % len(masks))
         return masks
         
-    ## Find Plants
+    ## Find Offsets
     """
     1. Calculates the column summation of the mask
     2. Calculates the 95th percentile threshold of the column sum array
@@ -191,34 +183,34 @@ class Cultivator:
     4. Finds the median of this array of indices
     5. Repeat for each mask
     """
-    def find_indices(self, masks):
+    def find_offsets(self, masks):
         if self.VERBOSE: print('[Finding Offsets] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
-        indices = []
+        offsets = []
         for mask in masks:
             try:
                 column_sum = mask.sum(axis=0) # vertical summation
                 threshold = numpy.percentile(column_sum, self.THRESHOLD_PERCENTILE)
-                probable = numpy.nonzero(column_sum >= threshold) # returns 1 length tuble
+                probable = numpy.nonzero(column_sum >= threshold) # returns 1 length tuple
                 num_probable = len(probable[0])
-                centroid = int(numpy.median(probable[0]))
-                indices.append(centroid)
+                centroid = int(numpy.median(probable[0])) - self.PIXEL_CENTER
+                offsets.append(centroid)
             except Exception as error:
                 print('\tERROR in find_indices(): %s' % str(error))
-        if self.VERBOSE: print('\tDetected Indices: %s' % str(indices))
-        return indices
+        if self.VERBOSE: print('\tDetected Offsets: %s' % str(offsets))
+        return offsets
         
-    ## Best Guess for row based on multiple offsets from indices
+    ## Best guess for row based on calculated offsets of multiple cameras
     """
     1. If outside bounds, default to edges
     2. If inside, use mean of detected indices from both cameras
     """
-    def estimate_row(self, indices):
+    def estimate_row(self, offsets):
         if self.VERBOSE: print('[Making Best Guess of Crop Row] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
         try:
-            estimated =  int(numpy.mean(indices))
+            estimated =  int(numpy.mean(offsets))
         except Exception as error:
             print('\tERROR in estimate_row(): %s' % str(error))
-            estimated = self.PIXEL_CENTER
+            estimated = 0
         print('\tEstimated Offset: %s' % str(estimated))
         return estimated
         
@@ -236,7 +228,7 @@ class Cultivator:
         average = int(numpy.mean(self.offset_history)) #!TODO
         print('\tMoving Average: %s' % str(average)) 
         return average
-         
+    
     ## Control Hydraulics
     """
     1. Get PWM response corresponding to average offset
@@ -244,17 +236,26 @@ class Cultivator:
     """
     def control_hydraulics(self, estimate, average):
         if self.VERBOSE: print('[Controlling Hydraulics] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
-        pwm_avg = self.PWM_RESPONSE[average]
-        pwm_est = self.PWM_RESPONSE[estimate]
-        pwm = int(self.CENTER_PWM + self.I_COEF * (pwm_avg - self.CENTER_PWM) + self.P_COEF * (pwm_est - self.CENTER_PWM))
-        if pwm > self.MAX_PWM:
-            pwm = self.MAX_PWM
-        elif pwm < self.MIN_PWM:
-            pwm = self.MIN_PWM
-        try:
-            self.arduino.write(str(pwm) + '\n')
-        except Exception as error:
-            print('\tERROR in control_hydraulics(): %s' % str(error))
+        if self.ARDUINO_ENABLED:
+            adjusted = self.P_COEF * estimate + self.I_COEF * average
+            pwm = self.PWM_MAX - int(self.PWM_PER_PIXEL * (adjusted + self.PIXEL_RANGE))
+            if pwm < self.PWM_MIN:
+                pwm = self.PWM_MIN
+            elif pwm > self.PWM_MAX:
+                pwm = self.PWM_MAX
+            try:
+                self.arduino.write(str(pwm) + '\n')
+            except Exception as error:
+                print('\tERROR in control_hydraulics(): %s' % str(error))
+        if self.ZABER_ENABLED:
+            try:
+                if len(self.zaber.command_queue) > 0:
+                    self.zaber.step()
+                else:
+                    self.zaber.move_absolute(self.ZABER_CENTER + self.MICROSTEP_COEF * adjusted)
+            except Exception as error:
+                print('\tERROR in control_hydraulics(): %s' % str(error))                
+        print('\tAdjusted Offset: %d' % adjusted)
         print('\tPWM Output: %s' % str(pwm))
         return pwm
     
@@ -303,12 +304,10 @@ class Cultivator:
 	while True:
             if self.VERBOSE: print('[Displaying Images] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
             try:
-                average = self.average
-                estimated = self.estimated
+                average = self.average + self.PIXEL_CENTER
+                pwm = self.pwm
                 masks = self.masks
                 images = self.images
-                cam0 = self.cam0
-                cam1 = self.cam1
                 output_images = []
                 for img,mask in zip(images, masks):
                     cv2.line(img, (self.PIXEL_MIN, 0), (self.PIXEL_MIN, self.PIXEL_HEIGHT), (0,0,255), 1)
@@ -318,13 +317,20 @@ class Cultivator:
                     output_images.append(numpy.vstack([img, numpy.zeros((20, self.PIXEL_WIDTH, 3), numpy.uint8)]))
                 output_small = numpy.hstack(output_images)
                 output_large = cv2.resize(output_small, (1024, 768))
+                # Offset Display
                 if average - self.PIXEL_CENTER >= 0:
                     average_str = str("+%2.2f cm" % ((average - self.PIXEL_CENTER) / float(self.PIXEL_PER_CM)))
-                elif average - self.PIXEL_CENTER< 0:
+                elif average - self.PIXEL_CENTER < 0:
                     average_str = str("%2.2f cm" % ((average - self.PIXEL_CENTER) / float(self.PIXEL_PER_CM)))
                 cv2.putText(output_large, average_str, (340,735), cv2.FONT_HERSHEY_SIMPLEX, 2, (255,255,255), 5)
+                ## PWM Display
+                #if pwm >= self.PWM_CENTER:
+                    #pwm_str = str("+%2.2f cm" % (100 * float(pwm / self.PWM_CENTER)))
+                #elif pwm < self.PWM_CENTER:
+                    #pwm_str = str("%-2.2f cm" % (100 * float(pwm / self.PIXEL_CENTER)))                  
+                #cv2.putText(output_large, pwm_str, (120,735), cv2.FONT_HERSHEY_SIMPLEX, 2, (255,255,255), 5)
                 cv2.namedWindow('AutoTill', cv2.WINDOW_NORMAL)
-                cv2.setWindowProperty('AutoTill', cv2.WND_PROP_FULLSCREEN, cv2.cv.CV_WINDOW_FULLSCREEN)
+                if self.FULLSCREEN: cv2.setWindowProperty('AutoTill', cv2.WND_PROP_FULLSCREEN, cv2.cv.CV_WINDOW_FULLSCREEN)
                 cv2.imshow('AutoTill', output_large)
                 if cv2.waitKey(5) == 3:
                     pass
@@ -403,24 +409,24 @@ class Cultivator:
                 start_time = time.time()
                 images = self.capture_images()
                 masks = self.plant_filter(images)
-                indices = self.find_indices(masks)
-                estimated = self.estimate_row(indices)
+                offsets = self.find_offsets(masks)
+                estimated = self.estimate_row(offsets)
                 average = self.average_row(estimated)
                 pwm = self.control_hydraulics(estimated, average)
                 frequency = self.throttle_frequency(start_time)
                 try:
-                    cam0 = indices[0]
+                    cam0 = offsets[0]
                 except Exception:
-                    cam0 = self.PIXEL_CENTER
+                    cam0 = 0
                 try:
-                    cam1 = indices[1]
+                    cam1 = offsets[1]
                 except Exception:
-                    cam1 = self.PIXEL_CENTER
+                    cam1 = 0
                 sample = {
-                    'cam0' : cam0 - self.PIXEL_CENTER, 
-                    'cam1' : cam1 - self.PIXEL_CENTER, 
-                    'estimate' : estimated - self.PIXEL_CENTER,
-                    'average' : average - self.PIXEL_CENTER,
+                    'cam0' : cam0, 
+                    'cam1' : cam1, 
+                    'estimate' : estimated,
+                    'average' : average,
                     'pwm': pwm,
                     'time' : datetime.strftime(datetime.now(), self.TIME_FORMAT),
                     'frequency' : frequency,
@@ -432,8 +438,7 @@ class Cultivator:
                 self.masks = masks
                 self.average = average
                 self.estimated = estimated
-                self.cam0 = cam0
-                self.cam1 = cam1
+                self.pwm = pwm
                 if self.MONGO_ON: doc_id = self.log_db(sample)
                 if self.LOGFILE_ON: self.log_file(sample)
             except KeyboardInterrupt as error:
