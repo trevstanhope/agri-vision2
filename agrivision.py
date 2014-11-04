@@ -236,13 +236,13 @@ class Cultivator:
     """
     def control_hydraulics(self, estimate, average):
         if self.VERBOSE: print('[Controlling Hydraulics] %s' % datetime.strftime(datetime.now(), self.TIME_FORMAT))
+        adjusted = self.P_COEF * estimate + self.I_COEF * average
+        pwm = self.PWM_MAX - int(self.PWM_PER_PIXEL * (adjusted + self.PIXEL_RANGE))
+        if pwm < self.PWM_MIN:
+            pwm = self.PWM_MIN
+        elif pwm > self.PWM_MAX:
+            pwm = self.PWM_MAX
         if self.ARDUINO_ENABLED:
-            adjusted = self.P_COEF * estimate + self.I_COEF * average
-            pwm = self.PWM_MAX - int(self.PWM_PER_PIXEL * (adjusted + self.PIXEL_RANGE))
-            if pwm < self.PWM_MIN:
-                pwm = self.PWM_MIN
-            elif pwm > self.PWM_MAX:
-                pwm = self.PWM_MAX
             try:
                 self.arduino.write(str(pwm) + '\n')
             except Exception as error:
@@ -254,7 +254,7 @@ class Cultivator:
                 else:
                     self.zaber.move_absolute(self.ZABER_CENTER + self.MICROSTEP_COEF * adjusted)
             except Exception as error:
-                print('\tERROR in control_hydraulics(): %s' % str(error))                
+                print('\tERROR in control_hydraulics(): %s' % str(error))
         print('\tAdjusted Offset: %d' % adjusted)
         print('\tPWM Output: %s' % str(pwm))
         return pwm
